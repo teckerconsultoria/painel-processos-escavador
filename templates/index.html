@@ -1,0 +1,560 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Consulta de Capa de Processo - Escavador</title>
+    <style>
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid black; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
+        .modal-content { background: white; margin: 5% auto; padding: 20px; width: 80%; max-height: 80%; overflow-y: auto; }
+        .tabs { overflow: hidden; border-bottom: 1px solid #ccc; }
+        .tab-link { background-color: #f1f1f1; float: left; border: none; outline: none; cursor: pointer; padding: 10px 20px; transition: 0.3s; }
+        .tab-link:hover { background-color: #ddd; }
+        .tab-link.active { background-color: #ccc; }
+        .tab-content { display: none; padding: 15px 0; }
+        .tab-content.active { display: block; }
+        .collapsible { background-color: #f2f2f2; cursor: pointer; padding: 8px; border: none; text-align: left; outline: none; font-size: 15px; width: 100%; }
+        .collapsible:hover { background-color: #ddd; }
+        .content { display: none; padding: 10px 0; }
+        .content.active { display: block; }
+        .search-container { margin-bottom: 10px; }
+        .search-container input { padding: 5px; width: 200px; }
+    </style>
+</head>
+<body>
+    <h1>Consulta de Capa de Processo</h1>
+    <label for="cnj">Número CNJ Único:</label>
+    <input type="text" id="cnj" placeholder="Ex: 0007356-56.2007.4.03.6119"><br><br>
+    <label for="file">Ou Carregue uma Lista de CNJs:</label>
+    <input type="file" id="file" accept=".txt"><br><br>
+    <button id="fetchBtn">Consultar Dados</button><br><br>
+    <table id="dataTable">
+        <thead>
+            <tr>
+                <th>Número CNJ</th>
+                <th>Polo Ativo</th>
+                <th>Polo Passivo</th>
+                <th>Ano Início</th>
+                <th>Data Início</th>
+                <th>Estado</th>
+                <th>Cidade</th>
+                <th>Última Movimentação</th>
+                <th>Qtd Movimentações</th>
+                <th>Fonte</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Linhas serão adicionadas aqui -->
+        </tbody>
+    </table>
+
+    <!-- Modal para detalhes -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h2>Detalhes do Processo</h2>
+            <div class="tabs">
+                <button class="tab-link active" onclick="openTab(event, 'processo')">Processo</button>
+                <button class="tab-link" onclick="openTab(event, 'fontes')">Fontes</button>
+                <button class="tab-link" onclick="openTab(event, 'envolvidos')">Envolvidos</button>
+                <button class="tab-link" onclick="openTab(event, 'capa')">Capa</button>
+                <button class="tab-link" onclick="openTab(event, 'assuntos_normalizados')">Assuntos Normalizados</button>
+                <button class="tab-link" onclick="openTab(event, 'informacoes_complementares')">Informações Complementares</button>
+            </div>
+
+            <div id="processo" class="tab-content active">
+                <table>
+                    <tbody id="processoDetails">
+                        <!-- Detalhes do processo serão adicionados aqui -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="fontes" class="tab-content">
+                <div class="search-container">
+                    <input type="text" id="fontesSearch" onkeyup="filterTable('fontesSearch', 'fontesTableBody')" placeholder="Pesquisar fontes...">
+                </div>
+                <button class="collapsible" onclick="toggleCollapsible(this)">Expandir/Contrair Fontes</button>
+                <div class="content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Descrição</th>
+                                <th>Nome</th>
+                                <th>Sigla</th>
+                                <th>Tipo</th>
+                                <th>Data Início</th>
+                                <th>Última Movimentação</th>
+                                <th>Status Predito</th>
+                                <th>Grau</th>
+                                <th>URL</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fontesTableBody">
+                            <!-- Linhas de fontes serão adicionadas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="envolvidos" class="tab-content">
+                <div class="search-container">
+                    <input type="text" id="envolvidosSearch" onkeyup="filterTable('envolvidosSearch', 'envolvidosTableBody')" placeholder="Pesquisar envolvidos...">
+                </div>
+                <button class="collapsible" onclick="toggleCollapsible(this)">Expandir/Contrair Envolvidos</button>
+                <div class="content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fonte</th>
+                                <th>Nome</th>
+                                <th>Tipo Pessoa</th>
+                                <th>Polo</th>
+                                <th>Tipo</th>
+                                <th>CPF/CNPJ</th>
+                                <th>Advogados</th>
+                            </tr>
+                        </thead>
+                        <tbody id="envolvidosTableBody">
+                            <!-- Linhas de envolvidos serão adicionadas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="capa" class="tab-content">
+                <div class="search-container">
+                    <input type="text" id="capaSearch" onkeyup="filterTable('capaSearch', 'capaTableBody')" placeholder="Pesquisar capa...">
+                </div>
+                <button class="collapsible" onclick="toggleCollapsible(this)">Expandir/Contrair Capa</button>
+                <div class="content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fonte</th>
+                                <th>Classe</th>
+                                <th>Assunto</th>
+                                <th>Órgão Julgador</th>
+                                <th>Valor da Causa</th>
+                                <th>Data Distribuição</th>
+                            </tr>
+                        </thead>
+                        <tbody id="capaTableBody">
+                            <!-- Linhas de capa serão adicionadas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="assuntos_normalizados" class="tab-content">
+                <div class="search-container">
+                    <input type="text" id="assuntosSearch" onkeyup="filterTable('assuntosSearch', 'assuntosTableBody')" placeholder="Pesquisar assuntos...">
+                </div>
+                <button class="collapsible" onclick="toggleCollapsible(this)">Expandir/Contrair Assuntos Normalizados</button>
+                <div class="content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fonte</th>
+                                <th>Nome</th>
+                                <th>Nome com Pai</th>
+                                <th>Path Completo</th>
+                                <th>Categoria Raiz</th>
+                                <th>Bloqueado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="assuntosTableBody">
+                            <!-- Linhas de assuntos normalizados serão adicionadas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="informacoes_complementares" class="tab-content">
+                <div class="search-container">
+                    <input type="text" id="infoCompSearch" onkeyup="filterTable('infoCompSearch', 'infoCompTableBody')" placeholder="Pesquisar informações complementares...">
+                </div>
+                <button class="collapsible" onclick="toggleCollapsible(this)">Expandir/Contrair Informações Complementares</button>
+                <div class="content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fonte</th>
+                                <th>Tipo</th>
+                                <th>Valor</th>
+                            </tr>
+                        </thead>
+                        <tbody id="infoCompTableBody">
+                            <!-- Linhas de informações complementares serão adicionadas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <button id="closeModal">Fechar</button>
+        </div>
+    </div>
+
+    <script>
+        const cnjInput = document.getElementById('cnj');
+        const fileInput = document.getElementById('file');
+        const fetchBtn = document.getElementById('fetchBtn');
+        const tableBody = document.querySelector('#dataTable tbody');
+        const modal = document.getElementById('modal');
+        const closeModalBtn = document.getElementById('closeModal');
+
+        fetchBtn.addEventListener('click', async () => {
+            tableBody.innerHTML = ''; // Limpa a tabela
+
+            if (cnjInput.value.trim()) {
+                const cnj = cnjInput.value.trim();
+                await fetchProcessData(cnj);
+            } else if (fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                const cnjList = await readFile(file);
+                if (cnjList.length > 2000) {
+                    alert('A lista excede o limite de 2000 processos.');
+                    return;
+                }
+                await processCNJList(cnjList);
+            } else {
+                alert('Insira um número CNJ ou carregue um arquivo.');
+            }
+        });
+
+        closeModalBtn.addEventListener('click', () => {
+            modal.style.display = 'none';
+        });
+
+        function openTab(event, tabName) {
+            const tabContents = document.getElementsByClassName('tab-content');
+            for (let i = 0; i < tabContents.length; i++) {
+                tabContents[i].classList.remove('active');
+            }
+            const tabLinks = document.getElementsByClassName('tab-link');
+            for (let i = 0; i < tabLinks.length; i++) {
+                tabLinks[i].classList.remove('active');
+            }
+            document.getElementById(tabName).classList.add('active');
+            event.currentTarget.classList.add('active');
+        }
+
+        function toggleCollapsible(button) {
+            const content = button.nextElementSibling;
+            content.classList.toggle('active');
+            button.textContent = content.classList.contains('active') ? 'Contrair' : 'Expandir';
+        }
+
+        function filterTable(searchId, tableId) {
+            const input = document.getElementById(searchId);
+            const filter = input.value.toLowerCase();
+            const table = document.getElementById(tableId);
+            const trs = table.getElementsByTagName('tr');
+
+            for (let i = 0; i < trs.length; i++) {
+                const tds = trs[i].getElementsByTagName('td');
+                let match = false;
+                for (let j = 0; j < tds.length; j++) {
+                    if (tds[j]) {
+                        const txtValue = tds[j].textContent || tds[j].innerText;
+                        if (txtValue.toLowerCase().indexOf(filter) > -1) {
+                            match = true;
+                            break;
+                        }
+                    }
+                }
+                trs[i].style.display = match ? '' : 'none';
+            }
+        }
+
+        function readFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const content = event.target.result;
+                    const cnjList = content.split('\n').map(line => line.trim()).filter(line => line);
+                    resolve(cnjList);
+                };
+                reader.onerror = (error) => reject(error);
+                reader.readAsText(file);
+            });
+        }
+
+        async function processCNJList(cnjList) {
+            const batchSize = 5;
+            for (let i = 0; i < cnjList.length; i += batchSize) {
+                const batch = cnjList.slice(i, i + batchSize);
+                const promises = batch.map(cnj => fetchProcessData(cnj));
+                await Promise.all(promises);
+                if (i + batchSize < cnjList.length) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+        }
+
+        async function fetchProcessData(cnj) {
+            try {
+                console.log(`Consultando CNJ ${cnj}...`);
+                const response = await fetch(`/api/processos/${cnj}`);
+                const data = await response.json();
+                if (response.status === 404) {
+                    console.log(`CNJ ${cnj} não encontrado (404).`);
+                    addRowToTable(null, cnj, 'Processo não encontrado');
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(data.error || `Erro HTTP ${response.status}`);
+                }
+                console.log(`Dados recebidos para CNJ ${cnj}:`, data);
+                addRowToTable(data, cnj, 'Sucesso');
+
+                // Envia os dados para o servidor salvar no banco
+                const saveResponse = await fetch('/save-to-db', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                const saveResult = await saveResponse.json();
+                if (!saveResponse.ok) {
+                    console.error(`Erro ao salvar CNJ ${cnj}:`, saveResult.error);
+                } else {
+                    console.log(`CNJ ${cnj} salvo no banco:`, saveResult.message);
+                }
+            } catch (error) {
+                const errorMessage = error.message || 'Erro desconhecido';
+                console.error(`Erro ao consultar CNJ ${cnj}:`, errorMessage);
+                alert(`Erro ao consultar CNJ ${cnj}: ${errorMessage}`);
+                addRowToTable(null, cnj, `Erro: ${errorMessage}`);
+            }
+        }
+
+        function addRowToTable(data, cnj, status) {
+            const row = document.createElement('tr');
+            row.setAttribute('data-cnj', cnj);
+            row.addEventListener('click', () => showDetails(data));
+            if (data) {
+                const fonte = data.fontes && data.fontes.length > 0 ? data.fontes[0].descricao : '';
+                row.innerHTML = `
+                    <td>${data.numero_cnj || ''}</td>
+                    <td>${data.titulo_polo_ativo || ''}</td>
+                    <td>${data.titulo_polo_passivo || ''}</td>
+                    <td>${data.ano_inicio || ''}</td>
+                    <td>${data.data_inicio || ''}</td>
+                    <td>${data.estado_origem?.sigla || ''}</td>
+                    <td>${data.unidade_origem?.cidade || ''}</td>
+                    <td>${data.data_ultima_movimentacao || ''}</td>
+                    <td>${data.quantidade_movimentacoes || ''}</td>
+                    <td>${fonte}</td>
+                    <td>${status}</td>
+                `;
+            } else {
+                row.innerHTML = `
+                    <td>${cnj}</td>
+                    <td colspan="9">Sem dados</td>
+                    <td>${status}</td>
+                `;
+            }
+            tableBody.appendChild(row);
+        }
+
+        function showDetails(data) {
+            if (!data) {
+                modal.style.display = 'none';
+                return;
+            }
+
+            // Aba Processo
+            const processoDetails = document.getElementById('processoDetails');
+            processoDetails.innerHTML = `
+                <tr><td>Número CNJ</td><td>${data.numero_cnj || ''}</td></tr>
+                <tr><td>Polo Ativo</td><td>${data.titulo_polo_ativo || ''}</td></tr>
+                <tr><td>Polo Passivo</td><td>${data.titulo_polo_passivo || ''}</td></tr>
+                <tr><td>Ano Início</td><td>${data.ano_inicio || ''}</td></tr>
+                <tr><td>Data Início</td><td>${data.data_inicio || ''}</td></tr>
+                <tr><td>Estado</td><td>${data.estado_origem?.sigla || ''}</td></tr>
+                <tr><td>Cidade</td><td>${data.unidade_origem?.cidade || ''}</td></tr>
+                <tr><td>Última Movimentação</td><td>${data.data_ultima_movimentacao || ''}</td></tr>
+                <tr><td>Quantidade Movimentações</td><td>${data.quantidade_movimentacoes || ''}</td></tr>
+                <tr><td>Fontes Arquivadas</td><td>${data.fontes_tribunais_estao_arquivadas ? 'Sim' : 'Não'}</td></tr>
+                <tr><td>Última Verificação</td><td>${data.data_ultima_verificacao || ''}</td></tr>
+                <tr><td>Tempo desde Última Verificação</td><td>${data.tempo_desde_ultima_verificacao || ''}</td></tr>
+            `;
+
+            // Aba Fontes
+            const fontesTableBody = document.getElementById('fontesTableBody');
+            fontesTableBody.innerHTML = '';
+            if (data.fontes && data.fontes.length > 0) {
+                data.fontes.forEach(fonte => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${fonte.descricao || ''}</td>
+                        <td>${fonte.nome || ''}</td>
+                        <td>${fonte.sigla || ''}</td>
+                        <td>${fonte.tipo || ''}</td>
+                        <td>${fonte.data_inicio || ''}</td>
+                        <td>${fonte.data_ultima_movimentacao || ''}</td>
+                        <td>${fonte.status_predito || ''}</td>
+                        <td>${fonte.grau_formatado || ''}</td>
+                        <td><a href="${fonte.url || ''}" target="_blank">${fonte.url || ''}</a></td>
+                    `;
+                    fontesTableBody.appendChild(row);
+                });
+            } else {
+                fontesTableBody.innerHTML = '<tr><td colspan="9">Nenhuma fonte encontrada</td></tr>';
+            }
+
+            // Aba Envolvidos
+            const envolvidosTableBody = document.getElementById('envolvidosTableBody');
+            envolvidosTableBody.innerHTML = '';
+            if (data.fontes && data.fontes.length > 0) {
+                data.fontes.forEach(fonte => {
+                    if (fonte.envolvidos && fonte.envolvidos.length > 0) {
+                        fonte.envolvidos.forEach(envolvido => {
+                            const advogados = envolvido.advogados && envolvido.advogados.length > 0
+                                ? envolvido.advogados.map(adv => adv.nome).join(', ')
+                                : 'Nenhum';
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${fonte.descricao || ''}</td>
+                                <td>${envolvido.nome || ''}</td>
+                                <td>${envolvido.tipo_pessoa || ''}</td>
+                                <td>${envolvido.polo || ''}</td>
+                                <td>${envolvido.tipo || ''}</td>
+                                <td>${envolvido.cpf || envolvido.cnpj || ''}</td>
+                                <td>${advogados}</td>
+                            `;
+                            envolvidosTableBody.appendChild(row);
+                        });
+                    }
+                });
+                if (envolvidosTableBody.innerHTML === '') {
+                    envolvidosTableBody.innerHTML = '<tr><td colspan="7">Nenhum envolvido encontrado</td></tr>';
+                }
+            } else {
+                envolvidosTableBody.innerHTML = '<tr><td colspan="7">Nenhum envolvido encontrado</td></tr>';
+            }
+
+            // Aba Capa
+            const capaTableBody = document.getElementById('capaTableBody');
+            capaTableBody.innerHTML = '';
+            if (data.fontes && data.fontes.length > 0) {
+                data.fontes.forEach(fonte => {
+                    if (fonte.capa) {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${fonte.descricao || ''}</td>
+                            <td>${fonte.capa.classe || ''}</td>
+                            <td>${fonte.capa.assunto || ''}</td>
+                            <td>${fonte.capa.orgao_julgador || ''}</td>
+                            <td>${fonte.capa.valor_causa?.valor_formatado || ''}</td>
+                            <td>${fonte.capa.data_distribuicao || ''}</td>
+                        `;
+                        capaTableBody.appendChild(row);
+                    }
+                });
+                if (capaTableBody.innerHTML === '') {
+                    capaTableBody.innerHTML = '<tr><td colspan="6">Nenhuma capa encontrada</td></tr>';
+                }
+            } else {
+                capaTableBody.innerHTML = '<tr><td colspan="6">Nenhuma capa encontrada</td></tr>';
+            }
+
+            // Aba Assuntos Normalizados
+            const assuntosTableBody = document.getElementById('assuntosTableBody');
+            assuntosTableBody.innerHTML = '';
+            if (data.fontes && data.fontes.length > 0) {
+                data.fontes.forEach(fonte => {
+                    if (fonte.capa && fonte.capa.assuntos_normalizados && fonte.capa.assuntos_normalizados.length > 0) {
+                        fonte.capa.assuntos_normalizados.forEach(assunto => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${fonte.descricao || ''}</td>
+                                <td>${assunto.nome || ''}</td>
+                                <td>${assunto.nome_com_pai || ''}</td>
+                                <td>${assunto.path_completo || ''}</td>
+                                <td>${assunto.categoria_raiz || ''}</td>
+                                <td>${assunto.bloqueado ? 'Sim' : 'Não'}</td>
+                            `;
+                            assuntosTableBody.appendChild(row);
+                        });
+                    }
+                });
+                if (assuntosTableBody.innerHTML === '') {
+                    assuntosTableBody.innerHTML = '<tr><td colspan="6">Nenhum assunto normalizado encontrado</td></tr>';
+                }
+            } else {
+                assuntosTableBody.innerHTML = '<tr><td colspan="6">Nenhum assunto normalizado encontrado</td></tr>';
+            }
+
+            // Aba Informações Complementares
+            const infoCompTableBody = document.getElementById('infoCompTableBody');
+            infoCompTableBody.innerHTML = '';
+            if (data.fontes && data.fontes.length > 0) {
+                data.fontes.forEach(fonte => {
+                    if (fonte.capa && fonte.capa.informacoes_complementares && fonte.capa.informacoes_complementares.length > 0) {
+                        fonte.capa.informacoes_complementares.forEach(info => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${fonte.descricao || ''}</td>
+                                <td>${info.tipo || ''}</td>
+                                <td>${info.valor || ''}</td>
+                            `;
+                            infoCompTableBody.appendChild(row);
+                        });
+                    }
+                });
+                if (infoCompTableBody.innerHTML === '') {
+                    infoCompTableBody.innerHTML = '<tr><td colspan="3">Nenhuma informação complementar encontrada</td></tr>';
+                }
+            } else {
+                infoCompTableBody.innerHTML = '<tr><td colspan="3">Nenhuma informação complementar encontrada</td></tr>';
+            }
+
+            modal.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
