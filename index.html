@@ -1,0 +1,1016 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Consulta de Capa de Processo - Escavador</title>
+    <style>
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid black; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
+        .modal-content { background: white; margin: 5% auto; padding: 20px; width: 80%; max-height: 80%; overflow-y: auto; }
+        .tabs { overflow: hidden; border-bottom: 1px solid #ccc; }
+        .tab-link { background-color: #f1f1f1; float: left; border: none; outline: none; cursor: pointer; padding: 10px 20px; transition: 0.3s; }
+        .tab-link:hover { background-color: #ddd; }
+        .tab-link.active { background-color: #ccc; }
+        .tab-content { display: none; padding: 15px 0; }
+        .tab-content.active { display: block; }
+        .collapsible { background-color: #f2f2f2; cursor: pointer; padding: 8px; border: none; text-align: left; outline: none; font-size: 15px; width: 100%; }
+        .collapsible:hover { background-color: #ddd; }
+        .content { display: none; padding: 10px 0; }
+        .content.active { display: block; }
+        .search-container { margin-bottom: 10px; }
+        .search-container input { padding: 5px; width: 200px; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.5.0/sql-wasm.js"></script>
+</head>
+<body>
+    <h1>Consulta de Capa de Processo</h1>
+    <label for="token">Token da API:</label>
+    <input type="text" id="token" placeholder="Insira seu token da API" style="width: 300px;"><br><br>
+    <label for="cnj">Número CNJ Único:</label>
+    <input type="text" id="cnj" placeholder="Ex: 0007356-56.2007.4.03.6119"><br><br>
+    <label for="file">Ou Carregue uma Lista de CNJs:</label>
+    <input type="file" id="file" accept=".txt"><br><br>
+    <button id="fetchBtn">Consultar Dados</button>
+    <button id="downloadBtn">Baixar Banco de Dados</button><br><br>
+    <table id="dataTable">
+        <thead>
+            <tr>
+                <th>Número CNJ</th>
+                <th>Polo Ativo</th>
+                <th>Polo Passivo</th>
+                <th>Ano Início</th>
+                <th>Data Início</th>
+                <th>Estado</th>
+                <th>Cidade</th>
+                <th>Última Movimentação</th>
+                <th>Qtd Movimentações</th>
+                <th>Fonte</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Linhas serão adicionadas aqui -->
+        </tbody>
+    </table>
+
+    <!-- Modal para detalhes -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h2>Detalhes do Processo</h2>
+            <div class="tabs">
+                <button class="tab-link active" onclick="openTab(event, 'processo')">Processo</button>
+                <button class="tab-link" onclick="openTab(event, 'fontes')">Fontes</button>
+                <button class="tab-link" onclick="openTab(event, 'envolvidos')">Envolvidos</button>
+                <button class="tab-link" onclick="openTab(event, 'capa')">Capa</button>
+                <button class="tab-link" onclick="openTab(event, 'assuntos_normalizados')">Assuntos Normalizados</button>
+                <button class="tab-link" onclick="openTab(event, 'informacoes_complementares')">Informações Complementares</button>
+            </div>
+
+            <div id="processo" class="tab-content active">
+                <table>
+                    <tbody id="processoDetails">
+                        <!-- Detalhes do processo serão adicionados aqui -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="fontes" class="tab-content">
+                <div class="search-container">
+                    <input type="text" id="fontesSearch" onkeyup="filterTable('fontesSearch', 'fontesTableBody')" placeholder="Pesquisar fontes...">
+                </div>
+                <button class="collapsible" onclick="toggleCollapsible(this)">Expandir/Contrair Fontes</button>
+                <div class="content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Descrição</th>
+                                <th>Nome</th>
+                                <th>Sigla</th>
+                                <th>Tipo</th>
+                                <th>Data Início</th>
+                                <th>Última Movimentação</th>
+                                <th>Status Predito</th>
+                                <th>Grau</th>
+                                <th>URL</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fontesTableBody">
+                            <!-- Linhas de fontes serão adicionadas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="envolvidos" class="tab-content">
+                <div class="search-container">
+                    <input type="text" id="envolvidosSearch" onkeyup="filterTable('envolvidosSearch', 'envolvidosTableBody')" placeholder="Pesquisar envolvidos...">
+                </div>
+                <button class="collapsible" onclick="toggleCollapsible(this)">Expandir/Contrair Envolvidos</button>
+                <div class="content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fonte</th>
+                                <th>Nome</th>
+                                <th>Tipo Pessoa</th>
+                                <th>Polo</th>
+                                <th>Tipo</th>
+                                <th>CPF/CNPJ</th>
+                                <th>Advogados</th>
+                            </tr>
+                        </thead>
+                        <tbody id="envolvidosTableBody">
+                            <!-- Linhas de envolvidos serão adicionadas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="capa" class="tab-content">
+                <div class="search-container">
+                    <input type="text" id="capaSearch" onkeyup="filterTable('capaSearch', 'capaTableBody')" placeholder="Pesquisar capa...">
+                </div>
+                <button class="collapsible" onclick="toggleCollapsible(this)">Expandir/Contrair Capa</button>
+                <div class="content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fonte</th>
+                                <th>Classe</th>
+                                <th>Assunto</th>
+                                <th>Órgão Julgador</th>
+                                <th>Valor da Causa</th>
+                                <th>Data Distribuição</th>
+                            </tr>
+                        </thead>
+                        <tbody id="capaTableBody">
+                            <!-- Linhas de capa serão adicionadas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="assuntos_normalizados" class="tab-content">
+                <div class="search-container">
+                    <input type="text" id="assuntosSearch" onkeyup="filterTable('assuntosSearch', 'assuntosTableBody')" placeholder="Pesquisar assuntos...">
+                </div>
+                <button class="collapsible" onclick="toggleCollapsible(this)">Expandir/Contrair Assuntos Normalizados</button>
+                <div class="content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fonte</th>
+                                <th>Nome</th>
+                                <th>Nome com Pai</th>
+                                <th>Path Completo</th>
+                                <th>Categoria Raiz</th>
+                                <th>Bloqueado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="assuntosTableBody">
+                            <!-- Linhas de assuntos normalizados serão adicionadas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="informacoes_complementares" class="tab-content">
+                <div class="search-container">
+                    <input type="text" id="infoCompSearch" onkeyup="filterTable('infoCompSearch', 'infoCompTableBody')" placeholder="Pesquisar informações complementares...">
+                </div>
+                <button class="collapsible" onclick="toggleCollapsible(this)">Expandir/Contrair Informações Complementares</button>
+                <div class="content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fonte</th>
+                                <th>Tipo</th>
+                                <th>Valor</th>
+                            </tr>
+                        </thead>
+                        <tbody id="infoCompTableBody">
+                            <!-- Linhas de informações complementares serão adicionadas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <button id="closeModal">Fechar</button>
+        </div>
+    </div>
+
+    <script>
+        let db;
+        const tokenInput = document.getElementById('token');
+        const cnjInput = document.getElementById('cnj');
+        const fileInput = document.getElementById('file');
+        const fetchBtn = document.getElementById('fetchBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const tableBody = document.querySelector('#dataTable tbody');
+        const modal = document.getElementById('modal');
+        const closeModalBtn = document.getElementById('closeModal');
+
+        // Inicializa o banco de dados SQLite
+        async function initDB() {
+            try {
+                const SQL = await initSqlJs({ locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.5.0/${file}` });
+                db = new SQL.Database();
+                db.run(`CREATE TABLE IF NOT EXISTS processos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    numero_cnj TEXT UNIQUE,
+                    titulo_polo_ativo TEXT,
+                    titulo_polo_passivo TEXT,
+                    ano_inicio INTEGER,
+                    data_inicio TEXT,
+                    estado_origem_nome TEXT,
+                    estado_origem_sigla TEXT,
+                    unidade_origem_nome TEXT,
+                    unidade_origem_cidade TEXT,
+                    unidade_origem_estado_nome TEXT,
+                    unidade_origem_estado_sigla TEXT,
+                    unidade_origem_tribunal_sigla TEXT,
+                    data_ultima_movimentacao TEXT,
+                    quantidade_movimentacoes INTEGER,
+                    fontes_tribunais_estao_arquivadas BOOLEAN,
+                    data_ultima_verificacao TEXT,
+                    tempo_desde_ultima_verificacao TEXT
+                )`);
+                db.run(`CREATE TABLE IF NOT EXISTS fontes_processo (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    processo_id INTEGER,
+                    fonte_id INTEGER,
+                    processo_fonte_id INTEGER,
+                    outros_numeros TEXT,
+                    descricao TEXT,
+                    nome TEXT,
+                    sigla TEXT,
+                    tipo TEXT,
+                    data_inicio TEXT,
+                    data_ultima_movimentacao TEXT,
+                    segredo_justica BOOLEAN,
+                    arquivado BOOLEAN,
+                    status_predito TEXT,
+                    grau INTEGER,
+                    grau_formatado TEXT,
+                    fisico BOOLEAN,
+                    sistema TEXT,
+                    url TEXT,
+                    tribunal_id INTEGER,
+                    tribunal_nome TEXT,
+                    tribunal_sigla TEXT,
+                    tribunal_categoria TEXT,
+                    quantidade_envolvidos INTEGER,
+                    fontes_data_ultima_verificacao TEXT,
+                    fontes_quantidade_movimentacoes INTEGER,
+                    FOREIGN KEY (processo_id) REFERENCES processos(id)
+                )`);
+                db.run(`CREATE TABLE IF NOT EXISTS fontes_capa (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fonte_id INTEGER,
+                    classe TEXT,
+                    assunto TEXT,
+                    area TEXT,
+                    orgao_julgador TEXT,
+                    situacao TEXT,
+                    valor_causa_valor TEXT,
+                    valor_causa_moeda TEXT,
+                    valor_causa_valor_formatado TEXT,
+                    data_distribuicao TEXT,
+                    data_arquivamento TEXT,
+                    FOREIGN KEY (fonte_id) REFERENCES fontes_processo(id)
+                )`);
+                db.run(`CREATE TABLE IF NOT EXISTS fontes_capa_assuntos_normalizados (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fonte_capa_id INTEGER,
+                    assunto_id INTEGER,
+                    nome TEXT,
+                    nome_com_pai TEXT,
+                    path_completo TEXT,
+                    categoria_raiz TEXT,
+                    bloqueado BOOLEAN,
+                    FOREIGN KEY (fonte_capa_id) REFERENCES fontes_capa(id)
+                )`);
+                db.run(`CREATE TABLE IF NOT EXISTS fontes_capa_informacoes_complementares (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fonte_capa_id INTEGER,
+                    tipo TEXT,
+                    valor TEXT,
+                    FOREIGN KEY (fonte_capa_id) REFERENCES fontes_capa(id)
+                )`);
+                db.run(`CREATE TABLE IF NOT EXISTS fontes_envolvidos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fonte_id INTEGER,
+                    nome TEXT,
+                    quantidade_processos INTEGER,
+                    tipo_pessoa TEXT,
+                    prefixo TEXT,
+                    sufixo TEXT,
+                    tipo TEXT,
+                    tipo_normalizado TEXT,
+                    polo TEXT,
+                    cpf TEXT,
+                    cnpj TEXT,
+                    FOREIGN KEY (fonte_id) REFERENCES fontes_processo(id)
+                )`);
+                db.run(`CREATE TABLE IF NOT EXISTS fontes_envolvidos_advogados (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    envolvido_id INTEGER,
+                    nome TEXT,
+                    quantidade_processos INTEGER,
+                    tipo_pessoa TEXT,
+                    prefixo TEXT,
+                    sufixo TEXT,
+                    tipo TEXT,
+                    tipo_normalizado TEXT,
+                    polo TEXT,
+                    cpf TEXT,
+                    cnpj TEXT,
+                    FOREIGN KEY (envolvido_id) REFERENCES fontes_envolvidos(id)
+                )`);
+                db.run(`CREATE TABLE IF NOT EXISTS fontes_envolvidos_advogados_oabs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    advogado_id INTEGER,
+                    uf TEXT,
+                    tipo TEXT,
+                    numero INTEGER,
+                    FOREIGN KEY (advogado_id) REFERENCES fontes_envolvidos_advogados(id)
+                )`);
+            } catch (error) {
+                console.error('Erro ao inicializar o banco de dados:', error);
+                alert('Erro ao inicializar o banco de dados: ' + error.message);
+            }
+        }
+
+        initDB();
+
+        fetchBtn.addEventListener('click', async () => {
+            const token = tokenInput.value.trim();
+            if (!token) {
+                alert('Por favor, insira o token da API.');
+                return;
+            }
+            tableBody.innerHTML = ''; // Limpa a tabela
+
+            if (cnjInput.value.trim()) {
+                const cnj = cnjInput.value.trim();
+                await fetchProcessData(token, cnj);
+            } else if (fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                const cnjList = await readFile(file);
+                if (cnjList.length > 2000) {
+                    alert('A lista excede o limite de 2000 processos.');
+                    return;
+                }
+                await processCNJList(token, cnjList);
+            } else {
+                alert('Insira um número CNJ ou carregue um arquivo.');
+            }
+        });
+
+        downloadBtn.addEventListener('click', () => {
+            try {
+                const data = db.export();
+                const blob = new Blob([data], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'processos.db';
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Erro ao baixar o banco de dados:', error);
+                alert('Erro ao baixar o banco de dados: ' + error.message);
+            }
+        });
+
+        closeModalBtn.addEventListener('click', () => {
+            modal.style.display = 'none';
+        });
+
+        function openTab(event, tabName) {
+            const tabContents = document.getElementsByClassName('tab-content');
+            for (let i = 0; i < tabContents.length; i++) {
+                tabContents[i].classList.remove('active');
+            }
+            const tabLinks = document.getElementsByClassName('tab-link');
+            for (let i = 0; i < tabLinks.length; i++) {
+                tabLinks[i].classList.remove('active');
+            }
+            document.getElementById(tabName).classList.add('active');
+            event.currentTarget.classList.add('active');
+        }
+
+        function toggleCollapsible(button) {
+            const content = button.nextElementSibling;
+            content.classList.toggle('active');
+            button.textContent = content.classList.contains('active') ? 'Contrair' : 'Expandir';
+        }
+
+        function filterTable(searchId, tableId) {
+            const input = document.getElementById(searchId);
+            const filter = input.value.toLowerCase();
+            const table = document.getElementById(tableId);
+            const trs = table.getElementsByTagName('tr');
+
+            for (let i = 0; i < trs.length; i++) {
+                const tds = trs[i].getElementsByTagName('td');
+                let match = false;
+                for (let j = 0; j < tds.length; j++) {
+                    if (tds[j]) {
+                        const txtValue = tds[j].textContent || tds[j].innerText;
+                        if (txtValue.toLowerCase().indexOf(filter) > -1) {
+                            match = true;
+                            break;
+                        }
+                    }
+                }
+                trs[i].style.display = match ? '' : 'none';
+            }
+        }
+
+        function readFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const content = event.target.result;
+                    const cnjList = content.split('\n').map(line => line.trim()).filter(line => line);
+                    resolve(cnjList);
+                };
+                reader.onerror = (error) => reject(error);
+                reader.readAsText(file);
+            });
+        }
+
+        async function processCNJList(token, cnjList) {
+            const batchSize = 5;
+            for (let i = 0; i < cnjList.length; i += batchSize) {
+                const batch = cnjList.slice(i, i + batchSize);
+                const promises = batch.map(cnj => fetchProcessData(token, cnj));
+                await Promise.all(promises);
+                if (i + batchSize < cnjList.length) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+        }
+
+        async function fetchProcessData(token, cnj) {
+            const url = `https://api.escavador.com/api/v2/processos/numero_cnj/${cnj}`;
+            try {
+                console.log(`Consultando CNJ ${cnj}...`);
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                if (response.status === 404) {
+                    console.log(`CNJ ${cnj} não encontrado (404).`);
+                    addRowToTable(null, cnj, 'Processo não encontrado');
+                    return;
+                }
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
+                }
+                const data = await response.json();
+                console.log(`Dados recebidos para CNJ ${cnj}:`, data);
+                addRowToTable(data, cnj, 'Sucesso');
+                await insertIntoDB(data);
+            } catch (error) {
+                const errorMessage = error.message || 'Erro desconhecido';
+                console.error(`Erro ao consultar CNJ ${cnj}:`, errorMessage);
+                alert(`Erro ao consultar CNJ ${cnj}: ${errorMessage}`);
+                addRowToTable(null, cnj, `Erro: ${errorMessage}`);
+            }
+        }
+
+        async function insertIntoDB(data) {
+            try {
+                console.log(`Inserindo processo ${data.numero_cnj} no banco...`);
+                const existing = db.exec(`SELECT id FROM processos WHERE numero_cnj = ?`, [data.numero_cnj]);
+                if (existing.length > 0) {
+                    console.log(`Processo ${data.numero_cnj} já existe no banco.`);
+                    return;
+                }
+
+                const stmt = db.prepare(`INSERT INTO processos (
+                    numero_cnj, titulo_polo_ativo, titulo_polo_passivo, ano_inicio, data_inicio,
+                    estado_origem_nome, estado_origem_sigla, unidade_origem_nome, unidade_origem_cidade,
+                    unidade_origem_estado_nome, unidade_origem_estado_sigla, unidade_origem_tribunal_sigla,
+                    data_ultima_movimentacao, quantidade_movimentacoes, fontes_tribunais_estao_arquivadas,
+                    data_ultima_verificacao, tempo_desde_ultima_verificacao
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+
+                stmt.run([
+                    data.numero_cnj || '',
+                    data.titulo_polo_ativo || '',
+                    data.titulo_polo_passivo || '',
+                    data.ano_inicio || null,
+                    data.data_inicio || '',
+                    data.estado_origem?.nome || '',
+                    data.estado_origem?.sigla || '',
+                    data.unidade_origem?.nome || '',
+                    data.unidade_origem?.cidade || '',
+                    data.unidade_origem?.estado?.nome || '',
+                    data.unidade_origem?.estado?.sigla || '',
+                    data.unidade_origem?.tribunal_sigla || '',
+                    data.data_ultima_movimentacao || '',
+                    data.quantidade_movimentacoes || 0,
+                    data.fontes_tribunais_estao_arquivadas || false,
+                    data.data_ultima_verificacao || '',
+                    data.tempo_desde_ultima_verificacao || ''
+                ]);
+
+                stmt.free();
+
+                const processoIdResult = db.exec("SELECT last_insert_rowid()")[0].values[0][0];
+                if (!processoIdResult) {
+                    throw new Error('Falha ao obter o ID do processo inserido.');
+                }
+                const processoId = processoIdResult;
+                console.log(`Processo ${data.numero_cnj} inserido com ID ${processoId}`);
+
+                if (data.fontes && Array.isArray(data.fontes) && data.fontes.length > 0) {
+                    for (let i = 0; i < data.fontes.length; i++) {
+                        const fonte = data.fontes[i];
+                        console.log(`Inserindo fonte ${i + 1} de ${data.fontes.length} para o processo ${data.numero_cnj}...`);
+                        const fonteStmt = db.prepare(`INSERT INTO fontes_processo (
+                            processo_id, fonte_id, processo_fonte_id, outros_numeros, descricao, nome, sigla, tipo,
+                            data_inicio, data_ultima_movimentacao, segredo_justica, arquivado, status_predito,
+                            grau, grau_formatado, fisico, sistema, url, tribunal_id, tribunal_nome, tribunal_sigla,
+                            tribunal_categoria, quantidade_envolvidos, fontes_data_ultima_verificacao,
+                            fontes_quantidade_movimentacoes
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+
+                        fonteStmt.run([
+                            processoId,
+                            fonte.id || null,
+                            fonte.processo_fonte_id || null,
+                            Array.isArray(fonte.outros_numeros) ? fonte.outros_numeros.join(',') : '',
+                            fonte.descricao || '',
+                            fonte.nome || '',
+                            fonte.sigla || '',
+                            fonte.tipo || '',
+                            fonte.data_inicio || '',
+                            fonte.data_ultima_movimentacao || '',
+                            fonte.segredo_justica || false,
+                            fonte.arquivado || null,
+                            fonte.status_predito || '',
+                            fonte.grau || null,
+                            fonte.grau_formatado || '',
+                            fonte.fisico || null,
+                            fonte.sistema || '',
+                            fonte.url || '',
+                            fonte.tribunal?.id || null,
+                            fonte.tribunal?.nome || '',
+                            fonte.tribunal?.sigla || '',
+                            fonte.tribunal?.categoria || '',
+                            fonte.quantidade_envolvidos || 0,
+                            fonte.data_ultima_verificacao || '',
+                            fonte.quantidade_movimentacoes || 0
+                        ]);
+
+                        fonteStmt.free();
+
+                        const fonteIdResult = db.exec("SELECT last_insert_rowid()")[0].values[0][0];
+                        if (!fonteIdResult) {
+                            throw new Error('Falha ao obter o ID da fonte inserida.');
+                        }
+                        const fonteId = fonteIdResult;
+                        console.log(`Fonte ${fonte.descricao} inserida com ID ${fonteId}`);
+
+                        if (fonte.capa) {
+                            console.log(`Inserindo capa para a fonte ${fonte.descricao}...`);
+                            const capaStmt = db.prepare(`INSERT INTO fontes_capa (
+                                fonte_id, classe, assunto, area, orgao_julgador, situacao,
+                                valor_causa_valor, valor_causa_moeda, valor_causa_valor_formatado,
+                                data_distribuicao, data_arquivamento
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+
+                            capaStmt.run([
+                                fonteId,
+                                fonte.capa.classe || '',
+                                fonte.capa.assunto || '',
+                                fonte.capa.area || '',
+                                fonte.capa.orgao_julgador || '',
+                                fonte.capa.situacao || '',
+                                fonte.capa.valor_causa?.valor || '',
+                                fonte.capa.valor_causa?.moeda || '',
+                                fonte.capa.valor_causa?.valor_formatado || '',
+                                fonte.capa.data_distribuicao || '',
+                                fonte.capa.data_arquivamento || ''
+                            ]);
+
+                            capaStmt.free();
+
+                            const capaIdResult = db.exec("SELECT last_insert_rowid()")[0].values[0][0];
+                            if (!capaIdResult) {
+                                throw new Error('Falha ao obter o ID da capa inserida.');
+                            }
+                            const capaId = capaIdResult;
+                            console.log(`Capa inserida com ID ${capaId}`);
+
+                            if (fonte.capa.assuntos_normalizados && Array.isArray(fonte.capa.assuntos_normalizados) && fonte.capa.assuntos_normalizados.length > 0) {
+                                for (const assunto of fonte.capa.assuntos_normalizados) {
+                                    const assuntoStmt = db.prepare(`INSERT INTO fontes_capa_assuntos_normalizados (
+                                        fonte_capa_id, assunto_id, nome, nome_com_pai, path_completo, categoria_raiz, bloqueado
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+
+                                    assuntoStmt.run([
+                                        capaId,
+                                        assunto.id || null,
+                                        assunto.nome || '',
+                                        assunto.nome_com_pai || '',
+                                        assunto.path_completo || '',
+                                        assunto.categoria_raiz || '',
+                                        assunto.bloqueado || false
+                                    ]);
+
+                                    assuntoStmt.free();
+                                }
+                            }
+
+                            if (fonte.capa.informacoes_complementares && Array.isArray(fonte.capa.informacoes_complementares) && fonte.capa.informacoes_complementares.length > 0) {
+                                for (const info of fonte.capa.informacoes_complementares) {
+                                    const infoStmt = db.prepare(`INSERT INTO fontes_capa_informacoes_complementares (
+                                        fonte_capa_id, tipo, valor
+                                    ) VALUES (?, ?, ?)`);
+
+                                    infoStmt.run([
+                                        capaId,
+                                        info.tipo || '',
+                                        info.valor || ''
+                                    ]);
+
+                                    infoStmt.free();
+                                }
+                            }
+                        }
+
+                        if (fonte.envolvidos && Array.isArray(fonte.envolvidos) && fonte.envolvidos.length > 0) {
+                            for (const envolvido of fonte.envolvidos) {
+                                const envolvidoStmt = db.prepare(`INSERT INTO fontes_envolvidos (
+                                    fonte_id, nome, quantidade_processos, tipo_pessoa, prefixo, sufixo, tipo,
+                                    tipo_normalizado, polo, cpf, cnpj
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+
+                                envolvidoStmt.run([
+                                    fonteId,
+                                    envolvido.nome || '',
+                                    envolvido.quantidade_processos || 0,
+                                    envolvido.tipo_pessoa || '',
+                                    envolvido.prefixo || '',
+                                    envolvido.sufixo || '',
+                                    envolvido.tipo || '',
+                                    envolvido.tipo_normalizado || '',
+                                    envolvido.polo || '',
+                                    envolvido.cpf || '',
+                                    envolvido.cnpj || ''
+                                ]);
+
+                                envolvidoStmt.free();
+
+                                const envolvidoIdResult = db.exec("SELECT last_insert_rowid()")[0].values[0][0];
+                                if (!envolvidoIdResult) {
+                                    throw new Error('Falha ao obter o ID do envolvido inserido.');
+                                }
+                                const envolvidoId = envolvidoIdResult;
+
+                                if (envolvido.advogados && Array.isArray(envolvido.advogados) && envolvido.advogados.length > 0) {
+                                    for (const advogado of envolvido.advogados) {
+                                        const advogadoStmt = db.prepare(`INSERT INTO fontes_envolvidos_advogados (
+                                            envolvido_id, nome, quantidade_processos, tipo_pessoa, prefixo, sufixo, tipo,
+                                            tipo_normalizado, polo, cpf, cnpj
+                                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+
+                                        advogadoStmt.run([
+                                            envolvidoId,
+                                            advogado.nome || '',
+                                            advogado.quantidade_processos || 0,
+                                            advogado.tipo_pessoa || '',
+                                            advogado.prefixo || '',
+                                            advogado.sufixo || '',
+                                            advogado.tipo || '',
+                                            advogado.tipo_normalizado || '',
+                                            advogado.polo || '',
+                                            advogado.cpf || '',
+                                            advogado.cnpj || ''
+                                        ]);
+
+                                        advogadoStmt.free();
+
+                                        const advogadoIdResult = db.exec("SELECT last_insert_rowid()")[0].values[0][0];
+                                        if (!advogadoIdResult) {
+                                            throw new Error('Falha ao obter o ID do advogado inserido.');
+                                        }
+                                        const advogadoId = advogadoIdResult;
+
+                                        if (advogado.oabs && Array.isArray(advogado.oabs) && advogado.oabs.length > 0) {
+                                            for (const oab of advogado.oabs) {
+                                                const oabStmt = db.prepare(`INSERT INTO fontes_envolvidos_advogados_oabs (
+                                                    advogado_id, uf, tipo, numero
+                                                ) VALUES (?, ?, ?, ?)`);
+
+                                                oabStmt.run([
+                                                    advogadoId,
+                                                    oab.uf || '',
+                                                    oab.tipo || '',
+                                                    oab.numero || null
+                                                ]);
+
+                                                oabStmt.free();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                const errorMessage = error.message || 'Erro desconhecido ao inserir no banco de dados';
+                console.error(`Erro ao inserir dados do CNJ ${data.numero_cnj} no banco:`, errorMessage);
+                throw new Error(errorMessage);
+            }
+        }
+
+        function addRowToTable(data, cnj, status) {
+            const row = document.createElement('tr');
+            row.setAttribute('data-cnj', cnj);
+            row.addEventListener('click', showDetails);
+            if (data) {
+                const fonte = data.fontes && data.fontes.length > 0 ? data.fontes[0].descricao : '';
+                row.innerHTML = `
+                    <td>${data.numero_cnj || ''}</td>
+                    <td>${data.titulo_polo_ativo || ''}</td>
+                    <td>${data.titulo_polo_passivo || ''}</td>
+                    <td>${data.ano_inicio || ''}</td>
+                    <td>${data.data_inicio || ''}</td>
+                    <td>${data.estado_origem?.sigla || ''}</td>
+                    <td>${data.unidade_origem?.cidade || ''}</td>
+                    <td>${data.data_ultima_movimentacao || ''}</td>
+                    <td>${data.quantidade_movimentacoes || ''}</td>
+                    <td>${fonte}</td>
+                    <td>${status}</td>
+                `;
+            } else {
+                row.innerHTML = `
+                    <td>${cnj}</td>
+                    <td colspan="9">Sem dados</td>
+                    <td>${status}</td>
+                `;
+            }
+            tableBody.appendChild(row);
+        }
+
+        function showDetails(event) {
+            const cnj = event.currentTarget.getAttribute('data-cnj');
+
+            // Aba Processo
+            const processo = db.exec(`
+                SELECT * FROM processos WHERE numero_cnj = ?
+            `, [cnj])[0].values[0];
+            const processoDetails = document.getElementById('processoDetails');
+            processoDetails.innerHTML = `
+                <tr><td>Número CNJ</td><td>${processo[1] || ''}</td></tr>
+                <tr><td>Polo Ativo</td><td>${processo[2] || ''}</td></tr>
+                <tr><td>Polo Passivo</td><td>${processo[3] || ''}</td></tr>
+                <tr><td>Ano Início</td><td>${processo[4] || ''}</td></tr>
+                <tr><td>Data Início</td><td>${processo[5] || ''}</td></tr>
+                <tr><td>Estado</td><td>${processo[7] || ''}</td></tr>
+                <tr><td>Cidade</td><td>${processo[9] || ''}</td></tr>
+                <tr><td>Última Movimentação</td><td>${processo[13] || ''}</td></tr>
+                <tr><td>Quantidade Movimentações</td><td>${processo[14] || ''}</td></tr>
+                <tr><td>Fontes Arquivadas</td><td>${processo[15] ? 'Sim' : 'Não'}</td></tr>
+                <tr><td>Última Verificação</td><td>${processo[16] || ''}</td></tr>
+                <tr><td>Tempo desde Última Verificação</td><td>${processo[17] || ''}</td></tr>
+            `;
+
+            // Aba Fontes
+            const fontes = db.exec(`
+                SELECT fp.descricao, fp.nome, fp.sigla, fp.tipo, fp.data_inicio, fp.data_ultima_movimentacao,
+                       fp.status_predito, fp.grau_formatado, fp.url
+                FROM fontes_processo fp
+                JOIN processos p ON fp.processo_id = p.id
+                WHERE p.numero_cnj = ?
+            `, [cnj]);
+            const fontesTableBody = document.getElementById('fontesTableBody');
+            fontesTableBody.innerHTML = '';
+            if (fontes.length > 0 && fontes[0].values.length > 0) {
+                fontes[0].values.forEach(fonte => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${fonte[0] || ''}</td>
+                        <td>${fonte[1] || ''}</td>
+                        <td>${fonte[2] || ''}</td>
+                        <td>${fonte[3] || ''}</td>
+                        <td>${fonte[4] || ''}</td>
+                        <td>${fonte[5] || ''}</td>
+                        <td>${fonte[6] || ''}</td>
+                        <td>${fonte[7] || ''}</td>
+                        <td><a href="${fonte[8] || ''}" target="_blank">${fonte[8] || ''}</a></td>
+                    `;
+                    fontesTableBody.appendChild(row);
+                });
+            } else {
+                fontesTableBody.innerHTML = '<tr><td colspan="9">Nenhuma fonte encontrada</td></tr>';
+            }
+
+            // Aba Envolvidos
+            const envolvidos = db.exec(`
+                SELECT fp.descricao, fe.nome, fe.tipo_pessoa, fe.polo, fe.tipo, fe.cpf, fe.cnpj, fea.nome as advogado_nome
+                FROM fontes_processo fp
+                JOIN processos p ON fp.processo_id = p.id
+                JOIN fontes_envolvidos fe ON fe.fonte_id = fp.id
+                LEFT JOIN fontes_envolvidos_advogados fea ON fea.envolvido_id = fe.id
+                WHERE p.numero_cnj = ?
+            `, [cnj]);
+            const envolvidosTableBody = document.getElementById('envolvidosTableBody');
+            envolvidosTableBody.innerHTML = '';
+            if (envolvidos.length > 0 && envolvidos[0].values.length > 0) {
+                let currentEnvolvido = null;
+                let advogados = [];
+                let fonteAtual = null;
+                envolvidos[0].values.forEach(envolvido => {
+                    if (currentEnvolvido !== envolvido[1] || fonteAtual !== envolvido[0]) {
+                        if (currentEnvolvido !== null) {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${fonteAtual || ''}</td>
+                                <td>${currentEnvolvido || ''}</td>
+                                <td>${envolvidos[0].values.find(e => e[1] === currentEnvolvido && e[0] === fonteAtual)[2] || ''}</td>
+                                <td>${envolvidos[0].values.find(e => e[1] === currentEnvolvido && e[0] === fonteAtual)[3] || ''}</td>
+                                <td>${envolvidos[0].values.find(e => e[1] === currentEnvolvido && e[0] === fonteAtual)[4] || ''}</td>
+                                <td>${envolvidos[0].values.find(e => e[1] === currentEnvolvido && e[0] === fonteAtual)[5] || envolvidos[0].values.find(e => e[1] === currentEnvolvido && e[0] === fonteAtual)[6] || ''}</td>
+                                <td>${advogados.join(', ') || 'Nenhum'}</td>
+                            `;
+                            envolvidosTableBody.appendChild(row);
+                            advogados = [];
+                        }
+                        currentEnvolvido = envolvido[1];
+                        fonteAtual = envolvido[0];
+                    }
+                    if (envolvido[7]) {
+                        advogados.push(envolvido[7]);
+                    }
+                });
+                // Adiciona a última linha
+                if (currentEnvolvido !== null) {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${fonteAtual || ''}</td>
+                        <td>${currentEnvolvido || ''}</td>
+                        <td>${envolvidos[0].values.find(e => e[1] === currentEnvolvido && e[0] === fonteAtual)[2] || ''}</td>
+                        <td>${envolvidos[0].values.find(e => e[1] === currentEnvolvido && e[0] === fonteAtual)[3] || ''}</td>
+                        <td>${envolvidos[0].values.find(e => e[1] === currentEnvolvido && e[0] === fonteAtual)[4] || ''}</td>
+                        <td>${envolvidos[0].values.find(e => e[1] === currentEnvolvido && e[0] === fonteAtual)[5] || envolvidos[0].values.find(e => e[1] === currentEnvolvido && e[0] === fonteAtual)[6] || ''}</td>
+                        <td>${advogados.join(', ') || 'Nenhum'}</td>
+                    `;
+                    envolvidosTableBody.appendChild(row);
+                }
+            } else {
+                envolvidosTableBody.innerHTML = '<tr><td colspan="7">Nenhum envolvido encontrado</td></tr>';
+            }
+
+            // Aba Capa
+            const capas = db.exec(`
+                SELECT fp.descricao, fc.classe, fc.assunto, fc.orgao_julgador, fc.valor_causa_valor_formatado, fc.data_distribuicao
+                FROM fontes_processo fp
+                JOIN processos p ON fp.processo_id = p.id
+                LEFT JOIN fontes_capa fc ON fc.fonte_id = fp.id
+                WHERE p.numero_cnj = ?
+            `, [cnj]);
+            const capaTableBody = document.getElementById('capaTableBody');
+            capaTableBody.innerHTML = '';
+            if (capas.length > 0 && capas[0].values.length > 0) {
+                capas[0].values.forEach(capa => {
+                    if (capa[1]) { // Verifica se há dados de capa
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${capa[0] || ''}</td>
+                            <td>${capa[1] || ''}</td>
+                            <td>${capa[2] || ''}</td>
+                            <td>${capa[3] || ''}</td>
+                            <td>${capa[4] || ''}</td>
+                            <td>${capa[5] || ''}</td>
+                        `;
+                        capaTableBody.appendChild(row);
+                    }
+                });
+                if (capaTableBody.innerHTML === '') {
+                    capaTableBody.innerHTML = '<tr><td colspan="6">Nenhuma capa encontrada</td></tr>';
+                }
+            } else {
+                capaTableBody.innerHTML = '<tr><td colspan="6">Nenhuma capa encontrada</td></tr>';
+            }
+
+            // Aba Assuntos Normalizados
+            const assuntos = db.exec(`
+                SELECT fp.descricao, fcan.nome, fcan.nome_com_pai, fcan.path_completo, fcan.categoria_raiz, fcan.bloqueado
+                FROM fontes_processo fp
+                JOIN processos p ON fp.processo_id = p.id
+                LEFT JOIN fontes_capa fc ON fc.fonte_id = fp.id
+                LEFT JOIN fontes_capa_assuntos_normalizados fcan ON fcan.fonte_capa_id = fc.id
+                WHERE p.numero_cnj = ?
+            `, [cnj]);
+            const assuntosTableBody = document.getElementById('assuntosTableBody');
+            assuntosTableBody.innerHTML = '';
+            if (assuntos.length > 0 && assuntos[0].values.length > 0) {
+                assuntos[0].values.forEach(assunto => {
+                    if (assunto[1]) { // Verifica se há dados de assunto normalizado
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${assunto[0] || ''}</td>
+                            <td>${assunto[1] || ''}</td>
+                            <td>${assunto[2] || ''}</td>
+                            <td>${assunto[3] || ''}</td>
+                            <td>${assunto[4] || ''}</td>
+                            <td>${assunto[5] ? 'Sim' : 'Não'}</td>
+                        `;
+                        assuntosTableBody.appendChild(row);
+                    }
+                });
+                if (assuntosTableBody.innerHTML === '') {
+                    assuntosTableBody.innerHTML = '<tr><td colspan="6">Nenhum assunto normalizado encontrado</td></tr>';
+                }
+            } else {
+                assuntosTableBody.innerHTML = '<tr><td colspan="6">Nenhum assunto normalizado encontrado</td></tr>';
+            }
+
+            // Aba Informações Complementares
+            const infoComp = db.exec(`
+                SELECT fp.descricao, fci.tipo, fci.valor
+                FROM fontes_processo fp
+                JOIN processos p ON fp.processo_id = p.id
+                LEFT JOIN fontes_capa fc ON fc.fonte_id = fp.id
+                LEFT JOIN fontes_capa_informacoes_complementares fci ON fci.fonte_capa_id = fc.id
+                WHERE p.numero_cnj = ?
+            `, [cnj]);
+            const infoCompTableBody = document.getElementById('infoCompTableBody');
+            infoCompTableBody.innerHTML = '';
+            if (infoComp.length > 0 && infoComp[0].values.length > 0) {
+                infoComp[0].values.forEach(info => {
+                    if (info[1]) { // Verifica se há dados de informações complementares
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${info[0] || ''}</td>
+                            <td>${info[1] || ''}</td>
+                            <td>${info[2] || ''}</td>
+                        `;
+                        infoCompTableBody.appendChild(row);
+                    }
+                });
+                if (infoCompTableBody.innerHTML === '') {
+                    infoCompTableBody.innerHTML = '<tr><td colspan="3">Nenhuma informação complementar encontrada</td></tr>';
+                }
+            } else {
+                infoCompTableBody.innerHTML = '<tr><td colspan="3">Nenhuma informação complementar encontrada</td></tr>';
+            }
+
+            modal.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
